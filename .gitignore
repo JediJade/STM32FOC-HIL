@@ -1,8 +1,9 @@
 # firmware build output
 build/
 
-# host tool scratch
-dist/
+# host tool scratch. dist*/ rather than dist/: a build cannot replace
+# an .exe that is open, so a second one sometimes goes to dist2.
+dist*/
 __pycache__/
 
 # UnityMbed IDE session state (machine-specific)
