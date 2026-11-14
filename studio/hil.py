@@ -29,6 +29,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import braun as B          # noqa: E402
 import serialport          # noqa: E402
 
+ICON_FILE = "unitymbed.ico"
+
+
+def resource_path(name):
+    """Where a data file is, run from the source tree or from one .exe.
+
+    PyInstaller unpacks what it carries into a temporary directory and
+    points sys._MEIPASS at it; from the source tree the same file sits
+    one level up, beside the project. Looking in all three in order
+    costs nothing and means the window has its icon either way.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for base in (getattr(sys, "_MEIPASS", here), here, os.path.dirname(here)):
+        path = os.path.join(base, name)
+        if os.path.exists(path):
+            return path
+    return os.path.join(here, name)
+
 W, H = 1280, 820
 RAIL = 232
 X0 = RAIL + 36
@@ -989,9 +1007,10 @@ class HilApp(tk.Tk):
                                  "Segoe UI", "Arial"))
         B.UI = self.face
         try:
-            here = os.path.dirname(os.path.abspath(__file__))
-            self.iconbitmap(default=os.path.join(os.path.dirname(here),
-                                                 "unitymbed.ico"))
+            # default= sets the window class icon, which is what the
+            # taskbar reads; without it the taskbar shows Tk's feather
+            # however many times the window icon is set.
+            self.iconbitmap(default=resource_path(ICON_FILE))
         except tk.TclError:
             pass
 
