@@ -191,3 +191,56 @@ FAULT = re.compile(r"\bfault\s+(.+?)\s*$")
 STATE_KEYS = ("ang", "spd", "id", "iq", "iqref", "moe")
 
 
+
+
+def port_identities():
+    """port -> the USB instance id Windows has for it, where there is one.
+
+    SERIALCOMM says which ports exist and nothing about what is on them.
+    The instance id is the device's own serial number, which is the one
+    thing that tells two identical Blue Pills apart - and the reason
+    their firmware stopped sharing one. FOC000001 is the drive,
+    HIL000001 is this board.
+
+    Returns {} rather than raising if the registry is not shaped the way
+    this expects: a port list with no names is still a port list.
+    """
+    out = {}
+    root = r"SYSTEM\CurrentControlSet\Enum\USB"
+    try:
+        usb = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, root)
+    except OSError:
+        return out
+    with usb:
+        for i in range(4096):
+            try:
+                vid = winreg.EnumKey(usb, i)
+            except OSError:
+                break
+            try:
+                vid_key = winreg.OpenKey(usb, vid)
+            except OSError:
+                continue
+            with vid_key:
+                for j in range(4096):
+                    try:
+                        inst = winreg.EnumKey(vid_key, j)
+                    except OSError:
+                        break
+                    try:
+                        with winreg.OpenKey(vid_key,
+                                            inst + r"\Device Parameters") as p:
+                            port, _ = winreg.QueryValueEx(p, "PortName")
+                    except OSError:
+                        continue
+                    # An instance id with no & in it is the device's own
+                    # serial number; one with & is Windows making one up
+                    # from where it was plugged in, which says nothing.
+                    out[port] = inst if "&" not in inst else ""
+    return out
+
+
+def describe_ports():
+    """(port, kind, identity) for every serial port, identity possibly ''."""
+    names = port_identities()
+    return [(port, kind, names.get(port, "")) for port, kind in list_ports()]

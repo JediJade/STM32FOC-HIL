@@ -381,9 +381,10 @@ class Page:
         self.items = []
 
     def text(self, x, y, text="", size=13, color=B.INK, anchor="nw",
-             num=False, width=None, face=None):
+             num=False, width=None, face=None, tags=()):
         item = self.cv.create_text(
             x, y, text=text, fill=color, anchor=anchor, width=width,
+            tags=tags,
             font=(face, -size) if face else B.font(size, num=num))
         self.items.append(item)
         return item
@@ -426,6 +427,178 @@ class Page:
         for item in self.items:
             self.cv.delete(item)
         self.items = []
+
+
+class BoardsPage(Page):
+    """The two consoles this window is holding, and how to pick them.
+
+    The ports used to be a short list squeezed into the rail, where a
+    click meant "the bench" the first time and "the drive" the second.
+    Nothing on screen said so. This is the drive studio's board page
+    done for two boards: the ports with what Windows knows about them,
+    a button that says which slot it fills, and a line of plain words
+    about each console that is open.
+    """
+
+    key, title = "boards", "boards"
+    subtitle = "the two consoles this window is holding"
+    PORT_ROWS = 4
+
+    def build(self):
+        cv = self.cv
+        xa, xb = X0, 900
+
+        self.text(xa, 120, "SERIAL PORT", 12, B.INK3)
+        self.rect(xa, 140, xb, 141, fill=B.LINE, width=0)
+        self.rows = []
+        for i in range(self.PORT_ROWS):
+            y = 150 + i * 42
+            tag = f"bport{i}"
+            bg = self.rect(xa, y, xb, y + 38, fill=B.PAPER, outline="",
+                           tags=(tag,))
+            bar = self.rect(xa, y, xa + 3, y + 38, fill=B.ORANGE, width=0,
+                            tags=(tag,))
+            name = self.text(xa + 16, y + 6, "", 20, B.INK, num=True,
+                             tags=(tag,))
+            kind = self.text(xa + 150, y + 12, "", 12, B.INK3, tags=(tag,))
+            who = self.text(xb - 12, y + 10, "", 13, B.INK2, "ne", tags=(tag,))
+            cv.tag_bind(tag, "<ButtonPress-1>", lambda e, i=i: self.pick(i))
+            self.rows.append((bg, bar, name, kind, who))
+
+        y = 150 + self.PORT_ROWS * 42 + 24
+        self.b_bench = self.button(xa + 44, y + 24, 48, B.ORANGE,
+                                   lambda: self.connect("hil"),
+                                   "connect as the bench")
+        self.b_drive = self.button(xa + 300, y + 24, 48, B.DARK2,
+                                   lambda: self.connect("drive"),
+                                   "connect as the drive")
+        self.button(xa + 560, y + 24, 36, B.DARK2, self.app.rescan, "rescan")
+        self.t_hint = self.text(xa, y + 66, "", 12, B.ORANGE, width=xb - xa)
+
+        y += 108
+        self.slots = []
+        for key, label in (("hil", "BENCH BOARD"), ("drive", "THE DRIVE")):
+            self.text(xa, y, label, 12, B.INK3)
+            self.rect(xa, y + 18, xb, y + 19, fill=B.LINE, width=0)
+            lines = self.text(xa, y + 28, "", 13, B.INK2, width=xb - xa - 160)
+            btn = self.button(xb - 76, y + 44, 28, B.DARK2,
+                              lambda k=key: self.drop(k), "disconnect")
+            self.slots.append((key, lines, btn))
+            y += 120
+
+        xc = 952
+        self.text(xc, 120, "WHICH IS WHICH", 12, B.INK3)
+        self.text(xc, 142,
+                  "The right-hand column is the serial number the board "
+                  "reports over USB, not a guess from where it is plugged "
+                  "in. FOC000001 is the drive; HIL000001 is this bench. "
+                  "They used to share one number, and Windows would then "
+                  "show only whichever was plugged in first.",
+                  12, B.INK3, width=X1 - xc)
+
+        self.text(xc, 280, "ONE CONSOLE, ONE PROGRAM", 12, B.INK3)
+        self.text(xc, 302,
+                  "A serial port cannot be opened twice. If FOC studio is "
+                  "holding the drive, this window cannot have it - connect "
+                  "the bench here and leave the drive to the other one. "
+                  "Everything on this board works either way; only the sync "
+                  "page needs both.",
+                  12, B.INK3, width=X1 - xc)
+
+        self.text(xc, 440, "NO HARDWARE", 12, B.INK3)
+        self.text(xc, 462,
+                  "Switch MODE to no hardware, or start with --model, and "
+                  "every page runs on numbers this window makes up. The "
+                  "load buttons answer too, which is the control worth "
+                  "playing with before a board arrives.",
+                  12, B.INK3, width=X1 - xc)
+
+    # ---- actions
+
+    def pick(self, i):
+        ports = self.app.ports
+        if i < len(ports):
+            self.app.sel = ports[i][0]
+
+    def connect(self, slot):
+        app = self.app
+        if app.mode == "model":
+            self.set(self.t_hint, "this window is in no-hardware mode. "
+                                  "switch MODE to real boards first.")
+            return
+        if app.sel is None:
+            self.set(self.t_hint, "pick a port first.")
+            return
+        other = app.drive if slot == "hil" else app.hil
+        if other is not None and getattr(other, "port", None) == app.sel:
+            self.set(self.t_hint, "that port is already open as the other "
+                                  "board.")
+            return
+        self.set(self.t_hint, "")
+        app.connect(slot, app.sel)
+        if app.notice:
+            self.set(self.t_hint, app.notice)
+
+    def drop(self, slot):
+        self.app.disconnect(slot)
+        self.set(self.t_hint, "")
+
+    # ---- drawing
+
+    def update(self):
+        app = self.app
+        for i, (bg, bar, name, kind, who) in enumerate(self.rows):
+            if i < len(app.ports):
+                port, what, ident = app.ports[i]
+                on = port == app.sel
+                self.cv.itemconfigure(bg, fill=B.PANEL if on else B.PAPER)
+                self.cv.itemconfigure(bar, state="normal" if on else "hidden")
+                self.set(name, port)
+                self.set(kind, what)
+                self.set(who, self.describe(port, ident))
+            else:
+                self.cv.itemconfigure(bg, fill=B.PAPER)
+                self.cv.itemconfigure(bar, state="hidden")
+                for item in (name, kind, who):
+                    self.set(item, "")
+
+        self.b_bench.set_color(B.DARK2 if app.hil else B.ORANGE)
+        self.b_drive.set_color(B.DARK2 if app.drive else B.ORANGE)
+
+        for key, lines, btn in self.slots:
+            board = app.hil if key == "hil" else app.drive
+            if board is None:
+                self.set(lines,
+                         "not connected." if key == "hil" else
+                         "not connected. the drive's console may be held by "
+                         "FOC studio instead, which is fine: only the sync "
+                         "page needs it.", B.INK3)
+                btn.set_label(color=B.INK3)
+                btn.set_color(B.LINE)
+            else:
+                st = board.state or {}
+                extra = ""
+                if key == "hil" and st.get("tick") is not None:
+                    extra = f"  model tick {st['tick']:,}"
+                self.set(lines,
+                         f"connected to {board.port}.\n"
+                         f"{board.version or 'no answer yet'}{extra}\n"
+                         + ("sending current on PA8 and PA9."
+                            if st.get("iout") else
+                            "not sending current." if key == "hil" else ""),
+                         B.INK2)
+                btn.set_label(color=B.INK2)
+                btn.set_color(B.DARK2)
+
+    @staticmethod
+    def describe(port, ident):
+        if not ident:
+            return ""
+        if ident.upper().startswith("HIL"):
+            return f"{ident}   this bench"
+        if ident.upper().startswith("FOC"):
+            return f"{ident}   the drive"
+        return ident
 
 
 class OverviewPage(Page):
@@ -1018,7 +1191,8 @@ class SyncPage(Page):
 
 class HilApp(tk.Tk):
     TICK_MS = 1000 // POLL_HZ
-    PAGES = (OverviewPage, SignalsPage, ScopePage, MotorPage, SyncPage)
+    PAGES = (BoardsPage, OverviewPage, SignalsPage, ScopePage, MotorPage,
+             SyncPage)
 
     def __init__(self, hil_port=None, drive_port=None, model=False):
         super().__init__()
@@ -1044,6 +1218,8 @@ class HilApp(tk.Tk):
         self.hil = None
         self.drive = None
         self.notice = ""
+        self.ports = []          # (port, kind, identity), from rescan()
+        self.sel = None          # the one a connect button would open
 
         self.cv = tk.Canvas(self, width=W, height=H, bg=B.PAPER,
                             highlightthickness=0)
@@ -1052,7 +1228,10 @@ class HilApp(tk.Tk):
 
         self.pages = {}
         self.page = None
-        self.show("overview")
+        self.rescan()
+        # Land where the work is: on the ports when there is connecting to
+        # do, on the overview when the boards are already in hand.
+        self.show("overview" if (model or hil_port) else "boards")
 
         self.mode = "model" if model else "boards"
         if model:
@@ -1089,7 +1268,7 @@ class HilApp(tk.Tk):
 
         self.nav = {}
         for i, cls in enumerate(self.PAGES):
-            y = 212 + i * 52
+            y = 208 + i * 46
             tag = f"nav{cls.key}"
             cv.create_rectangle(22, y - 10, RAIL - 20, y + 28, fill="",
                                 outline="", tags=(tag,))
@@ -1121,12 +1300,10 @@ class HilApp(tk.Tk):
                                       fill=B.MUTE, font=(self.face, -11),
                                       width=RAIL - 56)
 
-        self.port_items = []
-        cv.create_text(28, 680, text="PORTS", anchor="nw", fill=B.MUTE,
-                       font=(self.face, -11))
-        B.RoundButton(cv, RAIL - 40, 684, 20, B.DARK2, self.rescan,
-                      glyph="\u21bb", glyph_size=12)
-        cv.create_text(28, H - 28, text="no power stage, no motor, six wires",
+        cv.create_text(28, 684, text="page 1 picks the ports", anchor="nw",
+                       fill="#55554E", font=(self.face, -11),
+                       width=RAIL - 56)
+        cv.create_text(28, H - 28, text="no power stage, no motor, twelve wires",
                        anchor="nw", fill="#55554E", font=(self.face, -11),
                        width=RAIL - 56)
 
@@ -1140,27 +1317,17 @@ class HilApp(tk.Tk):
         self.rescan()
 
     def rescan(self):
-        for item in self.port_items:
-            self.cv.delete(item)
-        self.port_items = []
+        """What ports exist, and what each one says it is."""
         try:
-            ports = [p for p, _k in serialport.list_ports()]
+            self.ports = serialport.describe_ports()[:BoardsPage.PORT_ROWS]
         except Exception:                        # noqa: BLE001
-            ports = []
-        for i, port in enumerate(ports[:3]):
-            y = 706 + i * 26
-            tag = f"port{i}"
-            self.port_items.append(self.cv.create_text(
-                46, y, text=port, anchor="nw", fill=B.WHITE,
-                font=(self.face, -14), tags=(tag,)))
-            self.port_items.append(self.cv.create_rectangle(
-                28, y - 4, RAIL - 20, y + 20, fill="", outline="", tags=(tag,)))
-            self.cv.tag_bind(tag, "<ButtonPress-1>",
-                             lambda e, p=port: self.offer(p))
-        if not ports:
-            self.port_items.append(self.cv.create_text(
-                46, 706, text="no serial ports", anchor="nw", fill=B.MUTE,
-                font=(self.face, -12)))
+            self.ports = []
+        names = [p for p, _k, _i in self.ports]
+        if self.sel not in names:
+            # Offer the bench first: it is the board this window is for.
+            bench = [p for p, _k, i in self.ports
+                     if i.upper().startswith("HIL")]
+            self.sel = bench[0] if bench else (names[0] if names else None)
 
     def set_mode(self, key):
         """Real boards, or arithmetic in this window.
@@ -1182,21 +1349,17 @@ class HilApp(tk.Tk):
             self.notice = ("no hardware: every number on these pages is "
                            "being made up in this window.")
         else:
-            self.notice = "pick the ports below: the HIL board first."
+            self.notice = "pick the ports on page 1."
             self.rescan()
 
-    def offer(self, port):
-        """A click on a port connects whichever board is still missing."""
-        if self.mode == "model":
-            self.notice = ("this window is in no-hardware mode. switch to "
-                           "real boards first.")
-        elif self.hil is None:
-            self.connect("hil", port)
-        elif self.drive is None:
-            self.connect("drive", port)
+    def disconnect(self, which):
+        board = self.hil if which == "hil" else self.drive
+        if board is not None:
+            board.close()
+        if which == "hil":
+            self.hil = None
         else:
-            self.notice = (f"Both boards are connected. Close the window to "
-                           f"change them.")
+            self.drive = None
 
     def connect(self, which, port):
         hello = "ver"
