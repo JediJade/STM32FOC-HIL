@@ -571,6 +571,18 @@ class SignalsPage(Page):
         self.button(X1 - 284, 580, 26, B.DARK2,
                     lambda: self.app.hil_send("set ovl 0"), "reset the counter")
 
+        self.text(X1 - 300, 610, "CURRENT GOING OUT", 12, B.INK3)
+        self.b_iout = self.button(X1 - 284, 646, 26, B.DARK2,
+                                  self.toggle_iout, "")
+        self.t_iout = self.text(X1 - 258, 646, "", 13, B.INK2, anchor="w")
+        self.t_odut = self.text(X1 - 300, 676, "", 12, B.INK3, width=290)
+        self.text(X1 - 300, 716,
+                  "PA8 and PA9 carry the two phase currents as a 300 kHz "
+                  "duty. With an RC on each, the drive reads them on PA0 "
+                  "and PA1 where a shunt amplifier would be - and with "
+                  "`isrc 1` over there, it regulates them.",
+                  11, B.INK3, width=290)
+
         self.text(X0, 610, "FORCE A HALL PATTERN (for checking the wires)",
                   12, B.INK3)
         for i, code in enumerate((0, 1, 2, 4, 7)):
@@ -579,6 +591,10 @@ class SignalsPage(Page):
                         f"{code:03b}")
         self.button(X0 + 16 + 5 * 92, 646, 26, B.GREEN,
                     lambda: self.app.hil_send("set hall -1"), "back to model")
+
+    def toggle_iout(self):
+        st = self.app.hil.state if self.app.hil else {}
+        self.app.hil_send("set iout %d" % (0 if st.get("iout") else 1))
 
     def update(self):
         st = self.app.hil.state if self.app.hil else {}
@@ -616,6 +632,25 @@ class SignalsPage(Page):
                      f"of sensors produces.", B.INK3)
         ovl = st.get("ovl", 0) or 0
         self.set(self.ovl, str(ovl), B.RED if ovl else B.INK)
+
+        iout = st.get("iout")
+        if iout is None:
+            self.b_iout.set_color(B.DARK2)
+            self.set(self.t_iout, "this firmware cannot send current", B.INK3)
+            self.set(self.t_odut, "")
+        else:
+            self.b_iout.set_color(B.ORANGE if iout else B.DARK2)
+            self.set(self.t_iout, "sending" if iout else "off",
+                     B.INK if iout else B.INK3)
+            oa, ob = st.get("oa", 120), st.get("ob", 120)
+            mid = 120.0
+            self.set(self.t_odut,
+                     f"PA8 {oa} of 240 ({(oa / 240.0) * 3.3:.2f} V),   "
+                     f"PA9 {ob} ({(ob / 240.0) * 3.3:.2f} V).   "
+                     f"{mid:.0f} is zero current."
+                     if iout else
+                     "both pins idle; the drive reads whatever its own "
+                     "filters hold.")
 
 
 class ScopePage(Page):
