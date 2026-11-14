@@ -821,8 +821,16 @@ class SyncPage(Page):
                 self.text(X0 + 560, y, "–", 20, B.INK2, num=True))
 
         self.verdict = self.text(X0, 500, "", 14, B.INK, width=X1 - 300 - X0)
-        self.text(X0, 560, "WHY THIS MATTERS", 12, B.INK3)
-        self.text(X0, 580,
+        self.text(X0, 540, "WHAT ACTUALLY CROSSES THE WIRES", 12, B.INK3)
+        self.text(X0, 560,
+                  "The rotor angle, and nothing else. The drive still "
+                  "regulates the current of its own model, so the two "
+                  "currents above match only while both models are in the "
+                  "same state - put a load on this one and they part "
+                  "company. Speed and angle are the pair that must agree.",
+                  12, B.INK3, width=X1 - 300 - X0)
+        self.text(X0, 640, "WHY THIS MATTERS", 12, B.INK3)
+        self.text(X0, 660,
                   "The drive works out its speed from the Hall edges arriving "
                   "on its pins. The HIL board knows the true speed of the "
                   "model that produced those edges. Neither board can see the "
@@ -891,8 +899,14 @@ class SyncPage(Page):
                      B.GREEN if abs(wrap) < 6000 else B.MUTE)
         ia, ib = h.get("ia"), h.get("ib")
         if ia is not None and ib is not None:
+            # Loose on purpose. Only the ANGLE crosses the wires at this
+            # stage: the drive still regulates the current of its own
+            # model, which is not being braked by anything this bench
+            # does. The two agree while both plants are in the same
+            # state and part company as soon as they are not - which is
+            # worth seeing, not worth calling a fault.
             put("current", u.amps(d.get("iq")),
-                u.amps(u.vector(ia, ib)), "{:.2f}", 0.10)
+                u.amps(u.vector(ia, ib)), "{:.2f}", 0.35)
         vd, vq = d.get("vd"), d.get("vq")
         if vd is not None and vq is not None and h.get("da") is not None:
             drive_v = u.volts_from_q15(math.sqrt(vd * vd + vq * vq))
