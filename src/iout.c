@@ -35,13 +35,21 @@ void iout_init(void)
 
   /* TIM1 is an advanced timer: its outputs stay off until MOE is set, which
      is a safety interlock on a part meant to drive a bridge. */
-  /* Outputs stay off until iout_enable says otherwise. */
-  TIM1->CCER = 0u;
-  TIM1->BDTR = 0u;
-
   TIM1->CCR1 = MID;
   TIM1->CCR2 = MID;
   TIM1->EGR  = TIM_EGR_UG;
+
+  /*
+   * On from the start, like the Hall outputs.
+   *
+   * This board's job is to be the motor. A motor's current is there
+   * whether anyone asked for it, and a bench that has to be told to
+   * produce one is a bench that silently does nothing after a reset -
+   * which is exactly how an afternoon gets spent looking for a fault in
+   * two resistors. Mid-rail is zero current, so a board with nothing
+   * wired to these pins drives a steady 1.65 V into nothing.
+   */
+  iout_enable(1);
 }
 
 void iout_enable(int enable)
