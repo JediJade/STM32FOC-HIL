@@ -190,9 +190,19 @@ static const uint8_t config_desc[67] = {
 
 static const uint8_t lang_desc[4] = { 4, DESC_STRING, 0x09, 0x04 };
 
+/*
+ * Not the drive's strings, on purpose.
+ *
+ * This file was copied from the drive, serial number and all - and two
+ * boards on one host answering to the same vendor, product and serial are
+ * one device as far as Windows is concerned, which keys them on exactly
+ * that triple. The second one plugged in may take the first one's port or
+ * may not appear at all. A different serial is the whole fix; a different
+ * product string also makes a port list say which board is which.
+ */
 static const char str_manufacturer[] = "STMicroelectronics";
-static const char str_product[]      = "STM32 FOC Console";
-static const char str_serial[]       = "FOC000001";
+static const char str_product[]      = "STM32 HIL Bench";
+static const char str_serial[]       = "HIL000001";
 
 static uint8_t str_buf[64];
 
