@@ -129,6 +129,21 @@ class Units:
     def torque(self, iq_q15):
         return self.amps(iq_q15) * self.setup["torque_constant"]
 
+    def park_q(self, ia, ib, angle):
+        """The bench's own q-axis current, from what it measures itself.
+
+        Taking it from the drive's reported iq was a shortcut, and it
+        showed: with the drive's console held by the other window - which
+        is the normal way to run these two together - the torque read
+        0.000 N.m while the shaft was being braked. The bench has both
+        phase currents and the true rotor angle, so it can do its own
+        Park and owes the drive nothing.
+        """
+        ia, ib = ia or 0, ib or 0
+        beta = (ia + 2.0 * ib) / 1.7320508075688772
+        th = (angle or 0) / UNITS_PER_TURN * 2.0 * math.pi
+        return -ia * math.sin(th) + beta * math.cos(th)
+
 
 # ------------------------------------------------------------------ links --
 
@@ -499,7 +514,7 @@ class OverviewPage(Page):
         st = app.hil.state if app.hil else {}
         ds = app.drive.state if app.drive else {}
         spd = st.get("spd", 0)
-        iq = ds.get("iq", 0)
+        iq = u.park_q(st.get("ia"), st.get("ib"), st.get("ang"))
         mag = u.vector(st.get("ia"), st.get("ib")) / 1.4142135623730951
         self.set(self.big["shaft"], f"{u.rpm_shaft(spd):,.0f}")
         self.set(self.big["elec"], f"{u.hz_elec(spd):,.1f}")
@@ -516,6 +531,15 @@ class OverviewPage(Page):
             self.set(self.summary, "Everything checks out. The drive is "
                                    "controlling a motor that lives in the "
                                    "other microcontroller.", B.INK2)
+        elif (app.drive is None
+              and all(c.ok for c in app.checks if c.key != "sync")):
+            # The normal way to run the two windows: the drive's console
+            # belongs to the other one. Everything this board can check
+            # is good, and the one row that needs both is not a fault.
+            self.set(self.summary,
+                     "The bench is healthy. The drive's console belongs to "
+                     "the other window, so the two speeds cannot be compared "
+                     "from here.", B.INK2)
         else:
             self.set(self.summary, "Waiting for both boards and for the drive "
                                    "to start switching.", B.ORANGE)
