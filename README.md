@@ -67,6 +67,36 @@ catching that here instead is most of why a bench like this is worth
 building. Nothing else is connected, and neither board has anything on it
 that can be damaged by getting the wiring wrong.
 
+## What it measures
+
+With both halves crossing - the angle on three Hall pins, the current on
+two ADC pins - a load applied to the rotor inside the bench board reaches
+the controller in the other chip. Measured on the two boards, speed held
+at 1200 units/ms:
+
+```
+  load   drive spd   drive iq   drive id
+     0        1190       1331         42
+     2        1199       1466        -35
+     4        1272       1992          2
+     8        1169       2316        -12
+    15        1186       2968        -31
+    27        1181       4151         80
+    48        1201       6226          2
+    85        1416      10240       -360
+```
+
+`iq` is the drive's own reading, off its own pins. It rises nearly five
+times while the speed holds, because the controller is finding the torque
+a brake somewhere else is asking for. `id` stays within a few tens of
+zero throughout: the drive is putting that current on the q axis of a
+rotor whose angle it also only knows from a wire. At a drag of 85 it runs
+out - `iq` saturates and the speed is no longer held.
+
+The same walk with only the angle crossing (stage one) left `iq` flat:
+the drive was regulating the current of its own model, which nothing on
+this bench could brake.
+
 ## Why this is worth building
 
 Everything in the drive's own list of "never connected" is on the far side
