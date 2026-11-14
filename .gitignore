@@ -1,0 +1,9 @@
+# firmware build output
+build/
+
+# host tool scratch
+dist/
+__pycache__/
+
+# UnityMbed IDE session state (machine-specific)
+.unitymbed/
