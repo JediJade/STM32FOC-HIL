@@ -64,6 +64,18 @@ typedef enum {
 
 void vmotor_set_mech(vm_mech mode, int32_t omega_step);
 
+/*
+ * A constant drag on the shaft, in the units omega is kept in: so much
+ * speed taken away every sample, whichever way the rotor is turning,
+ * and the rotor held still when there is not enough torque to break
+ * away from it. Rolling resistance, a brake, a load being lifted.
+ *
+ * It is what a preset already sets for the hub motor; this lets a test
+ * raise it a step at a time and watch the controller answer.
+ */
+void vmotor_set_load(int32_t drag);
+int32_t vmotor_load(void);
+
 /* Advance the plant by one sample with the stator-frame voltages applied. */
 void vmotor_step(int16_t v_alpha, int16_t v_beta);
 

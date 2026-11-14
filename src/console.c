@@ -92,7 +92,19 @@ static char *pair(char *p, const char *name, int32_t value)
 
 static uint8_t telemetry;
 static uint32_t next_telem;
-static int32_t load_setting;
+static int32_t lock_setting;
+
+static void reply_int(const char *name, int32_t value)
+{
+  char buf[32];
+  char *p = put_str(buf, name);
+
+  *p++ = ' ';
+  p = put_int(p, value);
+  *p++ = '\r';
+  *p++ = '\n';
+  emit(buf, (uint16_t)(p - buf));
+}
 
 static void print_state(void)
 {
@@ -134,6 +146,8 @@ static void print_state(void)
   p = pair(p, "moe", pwmin_outputs_on());
   p = pair(p, "ovl", (int32_t)pwmin_overlaps_total());
   p = pair(p, "late", (int32_t)hil_late_ticks());
+  p = pair(p, "load", vmotor_load());
+  p = pair(p, "lock", lock_setting);
   *p++ = '\r';
   *p++ = '\n';
   emit(buf, (uint16_t)(p - buf));
@@ -164,7 +178,8 @@ static void print_help(void)
   line("  m            toggle 10 Hz telemetry");
   line("  ver          hil <version>");
   line("  set mot <n>  motor model: 0 gimbal, 1 hub");
-  line("  set load <n> shaft: 0 free, 1 locked");
+  line("  set load <n> drag on the shaft, 0 none; 1 is the hub motor");
+  line("  set lock <n> 0 free, 1 shaft clamped");
   line("  set hwid <n> how much of a turn a Hall sensor stays on");
   line("  set dead <n> dead-time added back, timer ticks; 72 = 1.000 us");
   line("  set ovl 0    forget the overlaps counted so far");
@@ -210,9 +225,12 @@ static void do_set(const char *args)
     vmotor_set_preset((v != 0) ? 1 : 0);
     line((v != 0) ? "mot 1" : "mot 0");
   } else if (starts_with(args, "load ")) {
-    load_setting = parse_int(args + 5);
-    vmotor_set_mech((load_setting != 0) ? VM_MECH_LOCKED : VM_MECH_FREE, 0);
-    line((load_setting != 0) ? "load 1" : "load 0");
+    vmotor_set_load(parse_int(args + 5));
+    reply_int("load", vmotor_load());
+  } else if (starts_with(args, "lock ")) {
+    lock_setting = (parse_int(args + 5) != 0) ? 1 : 0;
+    vmotor_set_mech((lock_setting != 0) ? VM_MECH_LOCKED : VM_MECH_FREE, 0);
+    reply_int("lock", lock_setting);
   } else if (starts_with(args, "hwid ")) {
     int32_t v = parse_int(args + 5);
 
@@ -274,7 +292,7 @@ void console_init(void)
   cmd_len = 0U;
   telemetry = 0U;
   next_telem = 0U;
-  load_setting = 0;
+  lock_setting = 0;
 }
 
 void console_poll(void)

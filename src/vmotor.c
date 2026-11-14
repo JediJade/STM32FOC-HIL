@@ -84,6 +84,18 @@ void vmotor_set_preset(int preset)
   }
 }
 
+void vmotor_set_load(int32_t drag)
+{
+  if (drag < 0)    { drag = 0; }
+  if (drag > 4000) { drag = 4000; }
+  vm_load = drag;
+}
+
+int32_t vmotor_load(void)
+{
+  return vm_load;
+}
+
 void vmotor_set_mech(vm_mech mode, int32_t omega_step)
 {
   mech = mode;

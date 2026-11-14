@@ -85,6 +85,20 @@ class Units:
     def amps(self, q15):
         return (q15 or 0) * self.setup["current_full_scale"] / 32768.0
 
+    @staticmethod
+    def vector(ia, ib):
+        """How much current there is, from two of the three phases.
+
+        Not hypot(ia, ib). Those two are 120 degrees apart, not 90, so
+        their hypotenuse swings by half its own size as the rotor turns
+        and is not a measure of anything. The Clarke pair is the pair at
+        right angles: alpha is phase a, beta is the other two combined.
+        Its length is the amplitude, and it stands still.
+        """
+        ia, ib = ia or 0, ib or 0
+        beta = (ia + 2.0 * ib) / 1.7320508075688772
+        return math.hypot(ia, beta)
+
     # ---- voltage
     def volts_phase(self, duty):
         """A compare value of 0..1800 is a phase voltage about the mid rail."""
@@ -169,6 +183,13 @@ class FakeBoard:
 
     error = None
 
+    FREE_SPEED = 2200.0
+    # On the class, not the instance: the drive and the bench are two
+    # windows onto one imaginary rig, and a load put on the shaft is on
+    # the shaft both of them are looking at.
+    load = 0
+    lock = 0
+
     def __init__(self, kind):
         self.kind = kind
         self.port = "model"
@@ -180,17 +201,31 @@ class FakeBoard:
 
     def send(self, text):
         self.log.append("> " + text)
+        # The load controls are the ones worth answering without a board:
+        # the point of them is watching the speed sag and the current
+        # rise, and that can be shown in arithmetic.
+        parts = text.split()
+        if len(parts) == 3 and parts[0] == "set":
+            if parts[1] == "load":
+                FakeBoard.load = max(0, int(parts[2]))
+            elif parts[1] == "lock":
+                FakeBoard.lock = 1 if parts[2] != "0" else 0
 
     def poll(self):
         now = time.perf_counter()
         dt, self._t = now - self._t, now
-        spd = 2200.0
+        # A drag the controller is still winning against costs a little
+        # speed and a lot of current; past about 25 it wins instead.
+        spd = 0.0 if self.lock else max(0.0, self.FREE_SPEED - 62.0 * self.load)
         self._ang = (self._ang + spd * dt * 1000.0) % UNITS_PER_TURN
         th = self._ang / UNITS_PER_TURN * 2 * math.pi
         self.state.update({
             "ang": int(self._ang), "spd": int(spd),
-            "ia": int(2600 * math.sin(th)), "ib": int(2600 * math.sin(th - 2.094)),
-            "iq": 1500, "id": -20, "moe": 1, "live": 1, "ovl": 0, "late": 0,
+            "ia": int(min(9000, 1500 + 290 * self.load) * math.sin(th)),
+            "ib": int(min(9000, 1500 + 290 * self.load) * math.sin(th - 2.094)),
+            "iq": int(min(9000, 1500 + 290 * self.load)), "id": -20,
+            "moe": 1, "live": 1, "ovl": 0, "late": 0,
+            "load": self.load, "lock": self.lock,
             "hall": (0b101, 0b100, 0b110, 0b010, 0b011, 0b001)[
                 int(self._ang / UNITS_PER_TURN * 6) % 6],
             "per": 3598,
@@ -212,7 +247,7 @@ class Recorder:
     COLUMNS = ("t_s", "duty_a", "duty_b", "duty_c", "period_ticks",
                "hil_speed_units_ms", "hil_angle", "hall",
                "ia_counts", "ib_counts", "drive_speed_units_ms",
-               "drive_iq_counts", "overlaps", "late")
+               "drive_iq_counts", "load", "lock", "overlaps", "late")
 
     def __init__(self, seconds=TRACE_SECONDS, rate=POLL_HZ):
         self.limit = int(seconds * rate)
@@ -236,6 +271,7 @@ class Recorder:
                hil.get("spd"), hil.get("ang"), hil.get("hall"),
                hil.get("ia"), hil.get("ib"),
                drive.get("spd"), drive.get("iq"),
+               hil.get("load"), hil.get("lock"),
                hil.get("ovl"), hil.get("late"))
         self.rows.append(row)
         if not self.on and len(self.rows) > self.limit:
@@ -258,10 +294,15 @@ class Recorder:
 class Check:
     """One thing that can be right or wrong, in a sentence."""
 
-    def __init__(self, key, title, explain):
+    def __init__(self, key, title, explain, wrong=None):
         self.key = key
         self.title = title
         self.explain = explain
+        # The title is the good news, which is what a row of green lamps
+        # should read as. A summary of what is failing needs the bad news
+        # in its own words, or it says "something is wrong: both boards
+        # agree".
+        self.wrong = wrong or title.lower()
         self.ok = None
         self.detail = ""
 
@@ -269,21 +310,28 @@ class Check:
 def build_checks():
     return [
         Check("link", "HIL board answering",
-              "The bench board is on its port and replying."),
+              "The bench board is on its port and replying.",
+              "the bench board is not answering"),
         Check("pwm", "Drive is switching",
-              "Pulses are arriving on all three phase pins."),
+              "Pulses are arriving on all three phase pins.",
+              "the drive is not switching"),
         Check("period", "Carrier is 20 kHz",
-              "Every pulse period measures 50 us, as the drive intends."),
+              "Every pulse period measures 50 us, as the drive intends.",
+              "the carrier is not 20 kHz"),
         Check("bridge", "Bridge pattern safe",
               "No sample has caught a phase with both transistors on. "
-              "On real hardware that is a short across the supply."),
+              "On real hardware that is a short across the supply.",
+              "a phase had both transistors on"),
         Check("realtime", "Model keeping up",
-              "Every 50 us tick finished before the next one arrived."),
+              "Every 50 us tick finished before the next one arrived.",
+              "the model is not keeping up"),
         Check("hall", "Hall pattern valid",
-              "Never all-on or all-off: those two mean a broken sensor."),
+              "Never all-on or all-off: those two mean a broken sensor.",
+              "the hall pattern is impossible"),
         Check("sync", "Both boards agree",
               "The drive's speed and the model's true speed match, which "
-              "means the loop is closed through the wires."),
+              "means the loop is closed through the wires.",
+              "the two boards do not agree"),
     ]
 
 
@@ -379,11 +427,46 @@ class OverviewPage(Page):
             self.big[key] = self.text(xa, y + 16, "–", 30, B.INK, num=True)
             self.text(xa + 2, y + 52, unit, 11, B.INK3)
         self.text(X0, 544, "SHAFT SPEED", 12, B.INK3)
-        self.speed_chart = self.chart(X0, 564, X1 - X0, 212, unit="rpm")
+        self.speed_chart = self.chart(X0, 564, X1 - 330 - X0, 212, unit="rpm")
+
+        self.text(xa, 544, "LOAD ON THE SHAFT", 12, B.INK3)
+        self.t_load = self.text(xa, 564, "\u2013", 30, B.INK, num=True)
+        self.t_load_unit = self.text(xa + 2, 600, "drag", 11, B.INK3)
+        self.button(xa + 24, 646, 34, B.DARK2, lambda: self.step(-1), "")
+        self.text(xa + 24, 646, "\u2212", 20, B.WHITE, anchor="center")
+        self.button(xa + 86, 646, 34, B.ORANGE, lambda: self.step(1), "")
+        self.text(xa + 86, 646, "+", 20, B.WHITE, anchor="center")
+        self.button(xa + 16, 702, 22, B.DARK2,
+                    lambda: self.app.hil_send("set load 0"), "no load")
+        self.button(xa + 16, 734, 22, B.DARK2, self.toggle_lock,
+                    "clamp the shaft")
+        self.text(xa, 762,
+                  "Drag opposes the rotor whichever way it turns. Raise it "
+                  "and watch the speed dip and the current answer; raise it "
+                  "far enough and the drive runs out of torque.",
+                  11, B.INK3, width=300)
 
         self.text(X0, 150 + len(self.checks) * 46 + 16, "", 12, B.INK3)
         self.summary = self.text(X0, 150 + len(self.checks) * 46 + 20, "",
                                  13, B.ORANGE, width=X1 - 330 - X0)
+
+    LADDER = (0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 27, 36, 48, 64, 85, 110)
+
+    def step(self, direction):
+        """One rung at a time, and the rungs get further apart: the first
+        few are what a bearing costs, the last are a brake."""
+        st = self.app.hil.state if self.app.hil else {}
+        now = st.get("load", 0) or 0
+        rungs = self.LADDER
+        if direction > 0:
+            nxt = next((v for v in rungs if v > now), rungs[-1])
+        else:
+            nxt = next((v for v in reversed(rungs) if v < now), 0)
+        self.app.hil_send(f"set load {nxt}")
+
+    def toggle_lock(self):
+        st = self.app.hil.state if self.app.hil else {}
+        self.app.hil_send("set lock %d" % (0 if st.get("lock") else 1))
 
     def update(self):
         app = self.app
@@ -399,8 +482,7 @@ class OverviewPage(Page):
         ds = app.drive.state if app.drive else {}
         spd = st.get("spd", 0)
         iq = ds.get("iq", 0)
-        ia, ib = st.get("ia", 0), st.get("ib", 0)
-        mag = math.sqrt(ia * ia + ib * ib) / math.sqrt(2.0)
+        mag = u.vector(st.get("ia"), st.get("ib")) / 1.4142135623730951
         self.set(self.big["shaft"], f"{u.rpm_shaft(spd):,.0f}")
         self.set(self.big["elec"], f"{u.hz_elec(spd):,.1f}")
         self.set(self.big["torque"], f"{u.torque(iq):.3f}")
@@ -410,8 +492,8 @@ class OverviewPage(Page):
         bad = [c for c in app.checks if c.ok is False]
         if bad:
             self.set(self.summary,
-                     "Something is wrong: " + "; ".join(c.title for c in bad)
-                     + ". The line under each one says what it means.", B.RED)
+                     "Something is wrong: " + "; ".join(c.wrong for c in bad)
+                     + ". The line beside each red lamp says more.", B.RED)
         elif all(c.ok for c in app.checks):
             self.set(self.summary, "Everything checks out. The drive is "
                                    "controlling a motor that lives in the "
@@ -419,6 +501,17 @@ class OverviewPage(Page):
         else:
             self.set(self.summary, "Waiting for both boards and for the drive "
                                    "to start switching.", B.ORANGE)
+
+        load = st.get("load")
+        if load is None:
+            self.set(self.t_load, "\u2013")
+            self.set(self.t_load_unit, "this firmware has no load setting")
+        elif st.get("lock"):
+            self.set(self.t_load, "clamped", B.RED)
+            self.set(self.t_load_unit, "the shaft is held still")
+        else:
+            self.set(self.t_load, str(load), B.ORANGE if load else B.INK)
+            self.set(self.t_load_unit, "drag, 0 is a free shaft")
 
         rpm = [u.rpm_shaft(v) for v in
                app.rec.column("hil_speed_units_ms")[-600:]]
@@ -533,7 +626,8 @@ class ScopePage(Page):
                 ("duty_a", "phase A duty", "of 1800", B.ORANGE),
                 ("ia_counts", "phase A current", "Q15 counts", B.YELLOW),
                 ("drive_speed_units_ms", "drive's measured speed",
-                 "units/ms", B.GREEN))
+                 "units/ms", B.GREEN),
+                ("load", "drag on the shaft", "units", B.RED))
 
     def build(self):
         self.channel = 0
@@ -797,8 +891,8 @@ class SyncPage(Page):
                      B.GREEN if abs(wrap) < 6000 else B.MUTE)
         ia, ib = h.get("ia"), h.get("ib")
         if ia is not None and ib is not None:
-            mag = math.sqrt(ia * ia + ib * ib)
-            put("current", u.amps(d.get("iq")), u.amps(mag), "{:.2f}", 0.25)
+            put("current", u.amps(d.get("iq")),
+                u.amps(u.vector(ia, ib)), "{:.2f}", 0.10)
         vd, vq = d.get("vd"), d.get("vq")
         if vd is not None and vq is not None and h.get("da") is not None:
             drive_v = u.volts_from_q15(math.sqrt(vd * vd + vq * vq))
