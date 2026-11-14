@@ -42,6 +42,7 @@
 
 #include "stm32f103xb.h"
 #include "usb_cdc.h"
+#include "iout.h"
 #include "pwmin.h"
 #include "sensors.h"
 #include "vmotor.h"
@@ -143,14 +144,21 @@ static void usb_force_reenumerate(void)
 }
 
 /*
- * TIM1 is free on this board - it drives nothing - so it keeps the model's
- * period: 72 MHz / 3600 = 20 kHz, the drive's control rate exactly.
+ * TIM1 keeps the model's period and carries the current outputs.
+ *
+ * It used to count to 3600 once per tick. It now counts to 240 fifteen
+ * times, which is the same 20 kHz tick - the update event only fires when
+ * the repetition counter runs out - and gives a 300 kHz carrier on CH1
+ * and CH2 for the two currents. Whole periods either way: 240 x 15 = 3600,
+ * so the tick is not a rounded-off 20 kHz, it is the same 20 kHz.
  */
 static void tick_init(void)
 {
   RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
   TIM1->PSC = 0U;
-  TIM1->ARR = 3600U - 1U;
+  TIM1->ARR = IOUT_STEPS - 1U;
+  TIM1->RCR = 15U - 1U;
+  iout_init();
   TIM1->DIER = TIM_DIER_UIE;
   TIM1->CR1 = TIM_CR1_CEN;
   NVIC_SetPriority(TIM1_UP_IRQn, 0);       /* above USB */
@@ -184,6 +192,16 @@ void TIM1_UP_IRQHandler(void)
   v = pwmin_voltage();
   vmotor_step(v.alpha, v.beta);
   sensors_update();
+
+  {
+    /* The currents go out as they are measured, in the same tick that
+       produced them: a current the drive reads a period late is a current
+       measured at an angle the rotor has already left. */
+    int16_t ia, ib;
+
+    vmotor_phase_currents(&ia, &ib);
+    iout_write(ia, ib);
+  }
   model_ticks++;
 
   busy = 0U;

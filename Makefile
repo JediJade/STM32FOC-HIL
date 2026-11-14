@@ -14,6 +14,7 @@ CPU      = cortex-m3
 #   src/foc.c         Clarke and the sine table       (the drive's, unchanged)
 #   src/main.c        clock, the 20 kHz model tick, the console loop
 #   src/pwmin.c       the three phase duties, measured off the drive's pins
+#   src/iout.c        the two phase currents, sent back out as voltages
 #   src/sensors.c     the Hall pins the drive reads back
 SRCS := $(wildcard src/*.c)
 

@@ -2,6 +2,7 @@
 #include "usb_cdc.h"
 #include "pwmin.h"
 #include "sensors.h"
+#include "iout.h"
 #include "vmotor.h"
 #include "foc.h"
 
@@ -79,8 +80,25 @@ static void line(const char *text)
   emit(buf, (uint16_t)(p - buf));
 }
 
-static char *pair(char *p, const char *name, int32_t value)
+/*
+ * One `name value ` pair, and the end of the buffer it may not pass.
+ *
+ * The state line is where every new feature adds a field, and it had
+ * already grown past the buffer it was built in: the overflow wrote over
+ * console_poll's return address and the board took a UsageFault, but only
+ * once the drive was turning, because only then were the numbers long
+ * enough to reach the end. A truncated line is a cheap bug to notice. A
+ * smashed stack is not.
+ *
+ * Twelve bytes of headroom: the longest int32 is eleven characters plus
+ * the space, and emit() still needs two for the line ending.
+ */
+static char *pair_lim(char *p, const char *end, const char *name,
+                      int32_t value)
 {
+  if ((end - p) < 24) {
+    return p;
+  }
   p = put_str(p, name);
   *p++ = ' ';
   p = put_int(p, value);
@@ -108,7 +126,8 @@ static void reply_int(const char *name, int32_t value)
 
 static void print_state(void)
 {
-  char buf[160];
+  char buf[256];
+  const char *end = buf + sizeof(buf) - 4;
   char *p = put_str(buf, "s ");
   int16_t va, vb, vc, ia, ib;
   uint16_t period, high;
@@ -129,25 +148,29 @@ static void print_state(void)
     if (period != 0u) {
       duty = ((int32_t)high * 1800) / (int32_t)period;
     }
-    p = pair(p, (i == 0) ? "da" : ((i == 1) ? "db" : "dc"), duty);
+    p = pair_lim(p, end, (i == 0) ? "da" : ((i == 1) ? "db" : "dc"), duty);
   }
-  p = pair(p, "per", period);
-  p = pair(p, "va", va);
-  p = pair(p, "vb", vb);
-  p = pair(p, "vc", vc);
-  p = pair(p, "ang", (int32_t)vmotor_true_angle());
+  p = pair_lim(p, end, "per", period);
+  p = pair_lim(p, end, "va", va);
+  p = pair_lim(p, end, "vb", vb);
+  p = pair_lim(p, end, "vc", vc);
+  p = pair_lim(p, end, "ang", (int32_t)vmotor_true_angle());
   /* units per ms, the same unit the drive speaks, so the two state lines
      can be read side by side. vmotor keeps it as units per period in Q8. */
-  p = pair(p, "spd", (vmotor_true_speed() * 20) >> 8);
-  p = pair(p, "ia", ia);
-  p = pair(p, "ib", ib);
-  p = pair(p, "hall", sensors_hall_code());
-  p = pair(p, "live", pwmin_live());
-  p = pair(p, "moe", pwmin_outputs_on());
-  p = pair(p, "ovl", (int32_t)pwmin_overlaps_total());
-  p = pair(p, "late", (int32_t)hil_late_ticks());
-  p = pair(p, "load", vmotor_load());
-  p = pair(p, "lock", lock_setting);
+  p = pair_lim(p, end, "spd", (vmotor_true_speed() * 20) >> 8);
+  p = pair_lim(p, end, "ia", ia);
+  p = pair_lim(p, end, "ib", ib);
+  p = pair_lim(p, end, "hall", sensors_hall_code());
+  p = pair_lim(p, end, "live", pwmin_live());
+  p = pair_lim(p, end, "moe", pwmin_outputs_on());
+  p = pair_lim(p, end, "ovl", (int32_t)pwmin_overlaps_total());
+  p = pair_lim(p, end, "late", (int32_t)hil_late_ticks());
+  p = pair_lim(p, end, "tick", (int32_t)hil_model_ticks());
+  p = pair_lim(p, end, "iout", iout_enabled());
+  p = pair_lim(p, end, "oa", (int32_t)iout_duty_a());
+  p = pair_lim(p, end, "ob", (int32_t)iout_duty_b());
+  p = pair_lim(p, end, "load", vmotor_load());
+  p = pair_lim(p, end, "lock", lock_setting);
   *p++ = '\r';
   *p++ = '\n';
   emit(buf, (uint16_t)(p - buf));
@@ -162,8 +185,8 @@ static void print_duties(void)
     uint16_t period, high;
 
     pwmin_raw(i, &period, &high);
-    p = pair(p, (i == 0) ? "a" : ((i == 1) ? "b" : "c"), high);
-    p = pair(p, "of", period);
+    p = pair_lim(p, buf + sizeof(buf) - 4, (i == 0) ? "a" : ((i == 1) ? "b" : "c"), high);
+    p = pair_lim(p, buf + sizeof(buf) - 4, "of", period);
   }
   *p++ = '\r';
   *p++ = '\n';
@@ -184,6 +207,8 @@ static void print_help(void)
   line("  set dead <n> dead-time added back, timer ticks; 72 = 1.000 us");
   line("  set ovl 0    forget the overlaps counted so far");
   line("  set hall <n> drive a fixed hall pattern 0..7; -1 gives the model back");
+  line("  set iout <n> 0 off, 1 send the currents out on PA8 and PA9");
+  line("  set ispan <n> steps either side of mid-rail at full scale");
   line("");
   line("`ovl` counts samples that caught a phase with both transistors on.");
   line("On a real bridge that is a short across the bus. It must stay 0.");
@@ -245,6 +270,12 @@ static void do_set(const char *args)
     if (v > 500) { v = 500; }
     pwmin_deadtime((uint16_t)v);
     line("dead set");
+  } else if (starts_with(args, "iout ")) {
+    iout_enable(parse_int(args + 5) != 0);
+    reply_int("iout", iout_enabled());
+  } else if (starts_with(args, "ispan ")) {
+    iout_set_span(parse_int(args + 6));
+    reply_int("ispan", iout_span());
   } else if (starts_with(args, "hall ")) {
     int32_t v = parse_int(args + 5);
 

@@ -35,7 +35,31 @@ and a few wires.
                                          USB    the console, same CDC device
 ```
 
-Ten wires. The three high-side pins go to timers, which latch the period
+Two more wires and four passives add the other direction, once the bench
+is to drive the current as well as the angle:
+
+```
+   HIL PA8 --[ 10k ]--+-- drive PA0     phase a current
+                      |
+                    [10nF]
+                      |
+                     GND
+
+   HIL PA9 --[ 10k ]--+-- drive PA1     phase b current
+                      |
+                    [10nF]
+                      |
+                     GND
+```
+
+Those two pins carry a 300 kHz PWM whose duty is the model's phase
+current; the RC turns it into a voltage, and the drive's ADC reads it
+where a shunt amplifier would have been. Mid-rail is zero current. With
+`isrc 1` the drive stops reading its own model and regulates what this
+board sends it - which is what makes a load put on the shaft here reach
+the controller over there.
+
+Ten wires for the angle. The three high-side pins go to timers, which latch the period
 and the high time in hardware and cost the model nothing per edge. The
 three low-side pins are only read, once per model tick: a phase that ever
 has both transistors on is a short across the supply on real hardware, and
