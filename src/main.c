@@ -196,10 +196,21 @@ void TIM1_UP_IRQHandler(void)
   {
     /* The currents go out as they are measured, in the same tick that
        produced them: a current the drive reads a period late is a current
-       measured at an angle the rotor has already left. */
-    int16_t ia, ib;
+       measured at an angle the rotor has already left.
+     *
+     * Except when the bridge is off, and then they go out as zero. The
+     * model has no idea the inverter exists: give it no voltage while the
+     * rotor is still coasting and its back-EMF drives a current round a
+     * circuit that, in the real thing, is open. Sending that current to
+     * the drive is sending it a measurement no shunt could ever make -
+     * and it lands exactly where it does the most harm, because `izero`
+     * is run with the drive idle and would learn it as the zero.
+     */
+    int16_t ia = 0, ib = 0;
 
-    vmotor_phase_currents(&ia, &ib);
+    if (pwmin_outputs_on() != 0) {
+      vmotor_phase_currents(&ia, &ib);
+    }
     iout_write(ia, ib);
   }
   model_ticks++;
