@@ -19,6 +19,12 @@ onto a second microcontroller, which:
 No power stage, no gate driver, no motor, no battery. Two microcontrollers
 and a few wires.
 
+The window for this board is `HIL.exe` on the
+[releases page](https://github.com/JediJade/STM32FOC-HIL/releases): one file,
+no Python, and `HIL.exe --model` runs all of it on made-up data.
+[How to use both windows](https://github.com/JediJade/STM32FOC/blob/main/USAGE.th.md)
+is written up in Thai on the drive's side, since the two are used together.
+
 ```
    STM32F103 (the drive)                 STM32F103 (this board)
    PA8   phase A high ─────────────>  PA0    TIM2 CH1, PWM input
